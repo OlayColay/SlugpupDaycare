@@ -1,84 +1,144 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.RegularExpressions;
 using BepInEx;
-using UnityEngine;
-using SlugBase.Features;
-using static SlugBase.Features.FeatureTypes;
+using MoreSlugcats;
+using RWCustom;
 
-namespace SlugTemplate
+namespace SlugpupDaycare
 {
-    [BepInPlugin(MOD_ID, "Slugcat Template", "0.1.0")]
+    [BepInPlugin(MOD_ID, MOD_TITLE, "0.1.0")]
     class Plugin : BaseUnityPlugin
     {
-        private const string MOD_ID = "author.slugtemplate";
+        private const string MOD_ID = "olaycolay.slugpupdaycare";
+        private const string MOD_TITLE = "Slugpup Daycare";
 
-        public static readonly PlayerFeature<float> SuperJump = PlayerFloat("slugtemplate/super_jump");
-        public static readonly PlayerFeature<bool> ExplodeOnDeath = PlayerBool("slugtemplate/explode_on_death");
-        public static readonly GameFeature<float> MeanLizards = GameFloat("slugtemplate/mean_lizards");
+        public string[] daycareRegions = ["OE"];
 
+        // Load any resources, such as sprites or sounds
+        private void LoadResources(RainWorld rainWorld)
+        {
+        }
 
         // Add hooks
         public void OnEnable()
         {
             On.RainWorld.OnModsInit += Extras.WrapInit(LoadResources);
 
-            // Put your custom hooks here!
-            On.Player.Jump += Player_Jump;
-            On.Player.Die += Player_Die;
-            On.Lizard.ctor += Lizard_ctor;
-        }
-        
-        // Load any resources, such as sprites or sounds
-        private void LoadResources(RainWorld rainWorld)
-        {
+            On.OverWorld.GateRequestsSwitchInitiation += OverWorld_GateRequestsSwitchInitiation;
+
+            On.Room.ReadyForAI += Room_ReadyForAI;
+
+            On.MiscWorldSaveData.ToString += MiscWorldSaveData_ToString;
+            On.MiscWorldSaveData.FromString += MiscWorldSaveData_FromString;
         }
 
-        // Implement MeanLizards
-        private void Lizard_ctor(On.Lizard.orig_ctor orig, Lizard self, AbstractCreature abstractCreature, World world)
+        private void OverWorld_GateRequestsSwitchInitiation(On.OverWorld.orig_GateRequestsSwitchInitiation orig, OverWorld self, RegionGate reportBackToGate)
         {
-            orig(self, abstractCreature, world);
-
-            if(MeanLizards.TryGet(world.game, out float meanness))
+            World oldRegion = self.activeWorld;
+            string oldRegionAcronym = Region.GetVanillaEquivalentRegionAcronym(oldRegion.name);
+            if (daycareRegions.Contains(oldRegionAcronym))
             {
-                self.spawnDataEvil = Mathf.Min(self.spawnDataEvil, meanness);
+                MiscWorldSaveDataData sd = self.game.GetStorySession.saveState.miscWorldSaveData.SD();
+                sd.daycareSlugpups[oldRegionAcronym] = [];
+                for (int i = oldRegion.firstRoomIndex; i < oldRegion.firstRoomIndex + oldRegion.NumberOfRooms; i++)
+                {
+                    List<AbstractCreature> creaturesInRoom = oldRegion.GetAbstractRoom(i).creatures;
+                    for (int j = 0; j < creaturesInRoom.Count; j++)
+                    {
+                        if (creaturesInRoom[j].creatureTemplate.TopAncestor().type == MoreSlugcatsEnums.CreatureTemplateType.SlugNPC)
+                        {
+                            Custom.Log([MOD_TITLE, "Adding slugpup to be saved", creaturesInRoom[j].ID.number.ToString(), oldRegion.GetAbstractRoom(i).name]);
+                            sd.daycareSlugpups[oldRegionAcronym].Add(SaveState.AbstractCreatureToStringStoryWorld(creaturesInRoom[j]));
+                        }
+                    }
+                }
             }
+
+            orig(self, reportBackToGate);
         }
 
-
-        // Implement SuperJump
-        private void Player_Jump(On.Player.orig_Jump orig, Player self)
+        private void Room_ReadyForAI(On.Room.orig_ReadyForAI orig, Room self)
         {
-            orig(self);
-
-            if (SuperJump.TryGet(self, out var power))
+            Custom.Log([MOD_TITLE, "Spawning slugpups in room", self.abstractRoom.name]);
+            string regionAcronym = Region.GetVanillaEquivalentRegionAcronym(self.world.name);
+            if (daycareRegions.Contains(regionAcronym))
             {
-                self.jumpBoost *= 1f + power;
+                MiscWorldSaveDataData sd = self.game.GetStorySession.saveState.miscWorldSaveData.SD();
+                if (sd.daycareSlugpups.TryGetValue(regionAcronym, out List<string> slugpupsToRespawn))
+                {
+                    for (int i = 0; i < slugpupsToRespawn.Count;)
+                    {
+                        Custom.Log([MOD_TITLE, "Checking if we can spawn saved slugpup", slugpupsToRespawn[i]]);
+                        AbstractCreature slugpup = SaveState.AbstractCreatureFromString(self.world, slugpupsToRespawn[i], true);
+                        if (slugpup.Room.name == self.abstractRoom.name)
+                        {
+                            Custom.Log([MOD_TITLE, "Adding entity to room", slugpup.ID.number.ToString(), self.abstractRoom.name]);
+                            slugpup.Room.AddEntity(slugpup);
+                            (slugpup.state as PlayerNPCState).foodInStomach = int.MaxValue;
+                            sd.daycareSlugpups[regionAcronym].Remove(slugpupsToRespawn[i]);
+                        }
+                        else
+                        {
+                            i++;
+                        }
+                    }
+
+                    if (sd.daycareSlugpups[regionAcronym].Count == 0)
+                    {
+                        sd.daycareSlugpups.Remove(regionAcronym);
+                    }
+                }
             }
-        }
-
-        // Implement ExlodeOnDeath
-        private void Player_Die(On.Player.orig_Die orig, Player self)
-        {
-            bool wasDead = self.dead;
 
             orig(self);
+        }
 
-            if(!wasDead && self.dead
-                && ExplodeOnDeath.TryGet(self, out bool explode)
-                && explode)
+        private string MiscWorldSaveData_ToString(On.MiscWorldSaveData.orig_ToString orig, MiscWorldSaveData self)
+        {
+            MiscWorldSaveDataData sd = self.SD();
+
+            string addToSave = "";
+            if (sd.daycareSlugpups != null)
             {
-                // Adapted from ScavengerBomb.Explode
-                var room = self.room;
-                var pos = self.mainBodyChunk.pos;
-                var color = self.ShortCutColor();
-                room.AddObject(new Explosion(room, self, pos, 7, 250f, 6.2f, 2f, 280f, 0.25f, self, 0.7f, 160f, 1f));
-                room.AddObject(new Explosion.ExplosionLight(pos, 280f, 1f, 7, color));
-                room.AddObject(new Explosion.ExplosionLight(pos, 230f, 1f, 3, new Color(1f, 1f, 1f)));
-                room.AddObject(new ExplosionSpikes(room, pos, 14, 30f, 9f, 7f, 170f, color));
-                room.AddObject(new ShockWave(pos, 330f, 0.045f, 5, false));
+                addToSave += "DAYCARESLUGPUPS<mwB>";
+                KeyValuePair<string, List<string>>[] slugpupsToSave = [.. sd.daycareSlugpups.Distinct()];
+                for (int i = 0; i < slugpupsToSave.Length; i++)
+                {
+                    addToSave += slugpupsToSave[i].Key + "<mwC>" + string.Join("<mwD>", slugpupsToSave[i].Value) +
+                        (i < slugpupsToSave.Length - 1 ? "<mwB>" : "");
+                }
+                addToSave += "<mwA>";
+            }
+            Custom.Log([MOD_TITLE, "Adding slugpups to miscWorldSave", addToSave]);
 
-                room.ScreenMovement(pos, default, 1.3f);
-                room.PlaySound(SoundID.Bomb_Explode, pos);
-                room.InGameNoise(new Noise.InGameNoise(pos, 9000f, self, 1f));
+            return orig(self) + addToSave;
+        }
+
+        private void MiscWorldSaveData_FromString(On.MiscWorldSaveData.orig_FromString orig, MiscWorldSaveData self, string s)
+        {
+            orig(self, s);
+
+            MiscWorldSaveDataData sd = self.SD();
+            sd.daycareSlugpups = [];
+
+            //Custom.Log([MOD_TITLE, "Unrecognized save strings", .. self.unrecognizedSaveStrings]);
+            string slugpupDaycareSave = self.unrecognizedSaveStrings.FirstOrDefault(s => s.StartsWith("DAYCARESLUGPUPS"));
+            if (!slugpupDaycareSave.IsNullOrWhiteSpace())
+            {
+                Custom.Log([MOD_TITLE, "Slugpups Daycare save", slugpupDaycareSave]);
+                IEnumerable<string> slugpupDaycareRegions = Regex.Split(slugpupDaycareSave, "<mwB>").Skip(1);
+                Custom.Log([MOD_TITLE, "All saved slugpups", .. slugpupDaycareRegions]);
+                foreach (string region in slugpupDaycareRegions)
+                {
+                    if (!region.IsNullOrWhiteSpace())
+                    {
+                        string[] slugpupStrings = Regex.Split(region, "<mwC>");
+                        Custom.Log([MOD_TITLE, "Retreiving slugpups from save for region", .. slugpupStrings]);
+                        sd.daycareSlugpups[slugpupStrings[0]] = [.. Regex.Split(slugpupStrings[1], "<mwD>")];
+                    }
+                }
             }
         }
     }
