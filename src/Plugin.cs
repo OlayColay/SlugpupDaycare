@@ -1,10 +1,13 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text.RegularExpressions;
-using BepInEx;
+﻿using BepInEx;
+using CustomRegions.Mod;
+using MonoMod.RuntimeDetour;
 using MoreSlugcats;
 using RWCustom;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace SlugpupDaycare
 {
@@ -14,12 +17,26 @@ namespace SlugpupDaycare
         private const string MOD_ID = "olaycolay.slugpupdaycare";
         private const string MOD_TITLE = "Slugpup Daycare";
 
-        public string[] daycareRooms = ["DM_STOP", "OE_SEXTRA"];
-        public string[] daycareRegions;
+        public HashSet<string> daycareRooms = new(StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> daycareRegions = new(StringComparer.OrdinalIgnoreCase);
+
+        public string daycareRoomsPath = "daycarerooms.txt";
 
         // Load any resources, such as sprites or sounds
         private void LoadResources(RainWorld rainWorld)
         {
+            string path = AssetManager.ResolveFilePath(daycareRoomsPath);
+            if (File.Exists(path))
+            {
+                foreach (string text in File.ReadAllLines(path))
+                {
+                    if (!daycareRooms.Contains(text.Trim()))
+                    {
+                        daycareRooms.Add(text.Trim());
+                    }
+                }
+            }
+
             daycareRegions = [.. daycareRooms.Select(s => s.Split('_')[0]).Distinct()];
         }
 
@@ -34,10 +51,32 @@ namespace SlugpupDaycare
 
             On.MiscWorldSaveData.ToString += MiscWorldSaveData_ToString;
             On.MiscWorldSaveData.FromString += MiscWorldSaveData_FromString;
+
+            new Hook(typeof(CustomMerge).GetMethod(nameof(CustomMerge.MergeCustomFiles)), CustomMerge_MergeCustomFiles);
         }
 
+        private void CustomMerge_MergeCustomFiles(Action orig)
+        {
+            orig();
+
+            string filePath = Path.Combine(Path.Combine(Custom.RootFolderDirectory(), "mergedmods"), daycareRoomsPath);
+            if (!File.Exists(filePath))
+            {
+                CustomRegionsMod.CustomLog("merging daycarerooms");
+                CustomMerge.MergeSpecific(daycareRoomsPath);
+            }
+        }
+
+        // Save slugpups in daycare rooms from region we are exiting
         private void OverWorld_LoadWorld_string_Name_Timeline_bool(On.OverWorld.orig_LoadWorld_string_Name_Timeline_bool orig, OverWorld self, string worldName, SlugcatStats.Name playerCharacterNumber, SlugcatStats.Timeline time, bool singleRoomWorld)
         {
+            Custom.Log(
+            [
+                MOD_TITLE,
+                "Daycare rooms",
+                .. daycareRooms
+            ]);
+
             World oldRegion = self.activeWorld;
 
             if (oldRegion != null)
@@ -67,6 +106,7 @@ namespace SlugpupDaycare
             orig(self, worldName, playerCharacterNumber, time, singleRoomWorld);
         }
 
+        // Spawn saved slugpups
         private void Room_ReadyForAI(On.Room.orig_ReadyForAI orig, Room self)
         {
             if (daycareRooms.Contains(self.abstractRoom.name))
@@ -94,7 +134,7 @@ namespace SlugpupDaycare
                                 self.abstractRoom.name
                             ]);
                             slugpup.Room.AddEntity(slugpup);
-                            (slugpup.state as PlayerNPCState).foodInStomach = int.MaxValue;
+                            (slugpup.state as PlayerNPCState).foodInStomach = 3;
                             sd.daycareSlugpups[self.abstractRoom.name].Remove(slugpupsToRespawn[i]);
                         }
                         else
@@ -113,6 +153,7 @@ namespace SlugpupDaycare
             orig(self);
         }
 
+        // Add slugpups in daycare to miscWorldSave
         private string MiscWorldSaveData_ToString(On.MiscWorldSaveData.orig_ToString orig, MiscWorldSaveData self)
         {
             MiscWorldSaveDataData sd = self.SD();
@@ -139,6 +180,7 @@ namespace SlugpupDaycare
             return orig(self) + addToSave;
         }
 
+        // Retrieve slugpups in daycare from miscWorldSave
         private void MiscWorldSaveData_FromString(On.MiscWorldSaveData.orig_FromString orig, MiscWorldSaveData self, string s)
         {
             orig(self, s);
@@ -171,7 +213,7 @@ namespace SlugpupDaycare
                         Custom.Log(
                         [
                             MOD_TITLE,
-                            "Retreiving slugpups from save for room",
+                            "Retrieving slugpups from save for room",
                             .. slugpupStrings
                         ]);
                         sd.daycareSlugpups[slugpupStrings[0]] = [.. Regex.Split(slugpupStrings[1], "<mwD>")];
