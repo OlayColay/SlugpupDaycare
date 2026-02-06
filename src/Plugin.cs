@@ -37,6 +37,7 @@ namespace SlugpupDaycare
                 }
             }
 
+            daycareRooms = [.. daycareRooms.Distinct()];
             daycareRegions = [.. daycareRooms.Select(s => s.Split('_')[0]).Distinct()];
         }
 
