@@ -1,10 +1,10 @@
 ﻿{
-	"id": "author.slugtemplate",
-	"name": "Slugcat Template",
+	"id": "olaycolay.slugpupdaycare",
+	"name": "Slugpup Daycare",
 	"version": "0.1.0",
-	"authors": "Author",
-	"description": "A template for making SlugBase mods.",
-	"requirements": [ "slime-cubed.slugbase" ],
-	"requirements_names": [ "SlugBase" ],
-	"tags": [ "Custom Slugcat" ]
+	"authors": "OlayColay",
+	"description": "Keep your slugpups safe while you venture to other regions!",
+	"requirements": [ "crs" ],
+	"requirements_names": [ "Custom Regions Support" ],
+	"tags": [ "Regions", "Game Mechanics", "Dependency" ]
 }
