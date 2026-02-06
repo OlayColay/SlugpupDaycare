@@ -45,7 +45,9 @@ namespace SlugpupDaycare
         {
             On.RainWorld.OnModsInit += Extras.WrapInit(LoadResources);
 
-            On.OverWorld.LoadWorld_string_Name_Timeline_bool += OverWorld_LoadWorld_string_Name_Timeline_bool; ;
+            On.OverWorld.LoadWorld_string_Name_Timeline_bool += OverWorld_LoadWorld_string_Name_Timeline_bool;
+
+            On.ShelterDoor.DoorClosed += ShelterDoor_DoorClosed;
 
             On.Room.ReadyForAI += Room_ReadyForAI;
 
@@ -55,20 +57,14 @@ namespace SlugpupDaycare
             new Hook(typeof(CustomMerge).GetMethod(nameof(CustomMerge.MergeCustomFiles)), CustomMerge_MergeCustomFiles);
         }
 
-        private void CustomMerge_MergeCustomFiles(Action orig)
-        {
-            orig();
-
-            string filePath = Path.Combine(Path.Combine(Custom.RootFolderDirectory(), "mergedmods"), daycareRoomsPath);
-            if (!File.Exists(filePath))
-            {
-                CustomRegionsMod.CustomLog("merging daycarerooms");
-                CustomMerge.MergeSpecific(daycareRoomsPath);
-            }
-        }
-
         // Save slugpups in daycare rooms from region we are exiting
-        private void OverWorld_LoadWorld_string_Name_Timeline_bool(On.OverWorld.orig_LoadWorld_string_Name_Timeline_bool orig, OverWorld self, string worldName, SlugcatStats.Name playerCharacterNumber, SlugcatStats.Timeline time, bool singleRoomWorld)
+        private void OverWorld_LoadWorld_string_Name_Timeline_bool(
+            On.OverWorld.orig_LoadWorld_string_Name_Timeline_bool orig,
+            OverWorld self,
+            string worldName,
+            SlugcatStats.Name playerCharacterNumber,
+            SlugcatStats.Timeline time,
+            bool singleRoomWorld)
         {
             Custom.Log(
             [
@@ -86,24 +82,25 @@ namespace SlugpupDaycare
                 {
                     MiscWorldSaveDataData sd = self.game.GetStorySession.saveState.miscWorldSaveData.SD();
                     IEnumerable<AbstractRoom> regionDaycareRooms = oldRegion.abstractRooms.Where(room => daycareRooms.Contains(room.name));
-                    foreach (AbstractRoom daycareRoom in regionDaycareRooms)
-                    {
-                        sd.daycareSlugpups[daycareRoom.name] = [];
-                        List<string> slugpupsInRoom = [.. daycareRoom.creatures
-                            .Where(creature => creature.creatureTemplate.TopAncestor().type == MoreSlugcatsEnums.CreatureTemplateType.SlugNPC)
-                            .Select(SaveState.AbstractCreatureToStringStoryWorld)];
-                        Custom.Log(
-                        [
-                            MOD_TITLE,
-                            "Adding slugpup(s) to be saved",
-                            .. slugpupsInRoom
-                        ]);
-                        sd.daycareSlugpups[daycareRoom.name].AddRange(slugpupsInRoom);
-                    }
+                    SaveSlugpupsInRooms(regionDaycareRooms, sd);
                 }
             }
 
             orig(self, worldName, playerCharacterNumber, time, singleRoomWorld);
+        }
+
+        // Save slugpups in other daycare rooms if we shelter in the same region
+        private void ShelterDoor_DoorClosed(On.ShelterDoor.orig_DoorClosed orig, ShelterDoor self)
+        {
+            string regionAcronym = Region.GetVanillaEquivalentRegionAcronym(self.room.world.name);
+            if (daycareRegions.Contains(regionAcronym))
+            {
+                IEnumerable<AbstractRoom> otherDaycareRoomsInRegion = self.room.world.abstractRooms
+                    .Where(room => daycareRooms.Contains(room.name) && room.name != self.room.abstractRoom.name);
+                SaveSlugpupsInRooms(otherDaycareRoomsInRegion, self.room.game.GetStorySession.saveState.miscWorldSaveData.SD());
+            }
+
+            orig(self);
         }
 
         // Spawn saved slugpups
@@ -221,6 +218,40 @@ namespace SlugpupDaycare
                         ]);
                         sd.daycareSlugpups[slugpupStrings[0]] = [.. Regex.Split(slugpupStrings[1], "<mwD>")];
                     }
+                }
+            }
+        }
+
+        // Merge daycarerooms.txt between all mods
+        private void CustomMerge_MergeCustomFiles(Action orig)
+        {
+            orig();
+
+            string filePath = Path.Combine(Path.Combine(Custom.RootFolderDirectory(), "mergedmods"), daycareRoomsPath);
+            if (!File.Exists(filePath))
+            {
+                CustomRegionsMod.CustomLog("merging daycarerooms");
+                CustomMerge.MergeSpecific(daycareRoomsPath);
+            }
+        }
+
+        private void SaveSlugpupsInRooms(IEnumerable<AbstractRoom> daycareRooms, MiscWorldSaveDataData sd)
+        {
+            foreach (AbstractRoom daycareRoom in daycareRooms)
+            {
+                sd.daycareSlugpups[daycareRoom.name] = [];
+                List<string> slugpupsInRoom = [.. daycareRoom.creatures
+                            .Where(creature => creature.creatureTemplate.TopAncestor().type == MoreSlugcatsEnums.CreatureTemplateType.SlugNPC)
+                            .Select(SaveState.AbstractCreatureToStringStoryWorld)];
+                if (slugpupsInRoom.Count > 0)
+                {
+                    Custom.Log(
+                    [
+                        MOD_TITLE,
+                            "Adding slugpup(s) to be saved",
+                            .. slugpupsInRoom
+                    ]);
+                    sd.daycareSlugpups[daycareRoom.name].AddRange(slugpupsInRoom);
                 }
             }
         }
