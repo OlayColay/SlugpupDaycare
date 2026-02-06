@@ -14,7 +14,7 @@ namespace SlugpupDaycare
         private const string MOD_ID = "olaycolay.slugpupdaycare";
         private const string MOD_TITLE = "Slugpup Daycare";
 
-        public string[] daycareRegions = ["OE"];
+        public string[] daycareRegions = ["DM", "OE"];
 
         // Load any resources, such as sprites or sounds
         private void LoadResources(RainWorld rainWorld)
@@ -26,7 +26,7 @@ namespace SlugpupDaycare
         {
             On.RainWorld.OnModsInit += Extras.WrapInit(LoadResources);
 
-            On.OverWorld.GateRequestsSwitchInitiation += OverWorld_GateRequestsSwitchInitiation;
+            On.OverWorld.LoadWorld_string_Name_Timeline_bool += OverWorld_LoadWorld_string_Name_Timeline_bool; ;
 
             On.Room.ReadyForAI += Room_ReadyForAI;
 
@@ -34,29 +34,33 @@ namespace SlugpupDaycare
             On.MiscWorldSaveData.FromString += MiscWorldSaveData_FromString;
         }
 
-        private void OverWorld_GateRequestsSwitchInitiation(On.OverWorld.orig_GateRequestsSwitchInitiation orig, OverWorld self, RegionGate reportBackToGate)
+        private void OverWorld_LoadWorld_string_Name_Timeline_bool(On.OverWorld.orig_LoadWorld_string_Name_Timeline_bool orig, OverWorld self, string worldName, SlugcatStats.Name playerCharacterNumber, SlugcatStats.Timeline time, bool singleRoomWorld)
         {
             World oldRegion = self.activeWorld;
-            string oldRegionAcronym = Region.GetVanillaEquivalentRegionAcronym(oldRegion.name);
-            if (daycareRegions.Contains(oldRegionAcronym))
+
+            if (oldRegion != null)
             {
-                MiscWorldSaveDataData sd = self.game.GetStorySession.saveState.miscWorldSaveData.SD();
-                sd.daycareSlugpups[oldRegionAcronym] = [];
-                for (int i = oldRegion.firstRoomIndex; i < oldRegion.firstRoomIndex + oldRegion.NumberOfRooms; i++)
+                string oldRegionAcronym = Region.GetVanillaEquivalentRegionAcronym(oldRegion.name);
+                if (daycareRegions.Contains(oldRegionAcronym))
                 {
-                    List<AbstractCreature> creaturesInRoom = oldRegion.GetAbstractRoom(i).creatures;
-                    for (int j = 0; j < creaturesInRoom.Count; j++)
+                    MiscWorldSaveDataData sd = self.game.GetStorySession.saveState.miscWorldSaveData.SD();
+                    sd.daycareSlugpups[oldRegionAcronym] = [];
+                    for (int i = oldRegion.firstRoomIndex; i < oldRegion.firstRoomIndex + oldRegion.NumberOfRooms; i++)
                     {
-                        if (creaturesInRoom[j].creatureTemplate.TopAncestor().type == MoreSlugcatsEnums.CreatureTemplateType.SlugNPC)
+                        List<AbstractCreature> creaturesInRoom = oldRegion.GetAbstractRoom(i).creatures;
+                        for (int j = 0; j < creaturesInRoom.Count; j++)
                         {
-                            Custom.Log([MOD_TITLE, "Adding slugpup to be saved", creaturesInRoom[j].ID.number.ToString(), oldRegion.GetAbstractRoom(i).name]);
-                            sd.daycareSlugpups[oldRegionAcronym].Add(SaveState.AbstractCreatureToStringStoryWorld(creaturesInRoom[j]));
+                            if (creaturesInRoom[j].creatureTemplate.TopAncestor().type == MoreSlugcatsEnums.CreatureTemplateType.SlugNPC)
+                            {
+                                Custom.Log([MOD_TITLE, "Adding slugpup to be saved", creaturesInRoom[j].ID.number.ToString(), oldRegion.GetAbstractRoom(i).name]);
+                                sd.daycareSlugpups[oldRegionAcronym].Add(SaveState.AbstractCreatureToStringStoryWorld(creaturesInRoom[j]));
+                            }
                         }
                     }
                 }
             }
 
-            orig(self, reportBackToGate);
+            orig(self, worldName, playerCharacterNumber, time, singleRoomWorld);
         }
 
         private void Room_ReadyForAI(On.Room.orig_ReadyForAI orig, Room self)
