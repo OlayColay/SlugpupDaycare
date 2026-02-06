@@ -158,8 +158,10 @@ namespace SlugpupDaycare
         {
             MiscWorldSaveDataData sd = self.SD();
 
+            self.unrecognizedSaveStrings.RemoveAll(str => str.StartsWith("DAYCARESLUGPUPS"));
+
             string addToSave = "";
-            if (sd.daycareSlugpups != null)
+            if (sd.daycareSlugpups != null && sd.daycareSlugpups.Count > 0)
             {
                 addToSave += "DAYCARESLUGPUPS<mwB>";
                 KeyValuePair<string, List<string>>[] slugpupsToSave = [.. sd.daycareSlugpups.Distinct()];
@@ -169,15 +171,16 @@ namespace SlugpupDaycare
                         (i < slugpupsToSave.Length - 1 ? "<mwB>" : "");
                 }
                 addToSave += "<mwA>";
+                Custom.Log(
+                [
+                    MOD_TITLE,
+                    "Adding slugpups to miscWorldSave",
+                    addToSave
+                ]);
+                self.unrecognizedSaveStrings.Add(addToSave);
             }
-            Custom.Log(
-            [
-                MOD_TITLE,
-                "Adding slugpups to miscWorldSave",
-                addToSave
-            ]);
 
-            return orig(self) + addToSave;
+            return orig(self);
         }
 
         // Retrieve slugpups in daycare from miscWorldSave
