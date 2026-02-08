@@ -1,4 +1,5 @@
 ﻿using BepInEx;
+using BepInEx.Logging;
 using CustomRegions.Mod;
 using MonoMod.RuntimeDetour;
 using MoreSlugcats;
@@ -14,41 +15,30 @@ namespace SlugpupDaycare
     [BepInPlugin(MOD_ID, MOD_TITLE, "0.1.0")]
     class Plugin : BaseUnityPlugin
     {
+        public static ManualLogSource SDLogger;
+
         private const string MOD_ID = "olaycolay.slugpupdaycare";
         private const string MOD_TITLE = "Slugpup Daycare";
+        private const string DAYCARE_ROOMS_PATH = "daycarerooms.txt";
 
         public HashSet<string> daycareRooms = new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string> daycareRegions = new(StringComparer.OrdinalIgnoreCase);
 
-        public string daycareRoomsPath = "daycarerooms.txt";
-
         // Load any resources, such as sprites or sounds
         private void LoadResources(RainWorld rainWorld)
         {
-            string path = AssetManager.ResolveFilePath(daycareRoomsPath);
-            if (File.Exists(path))
-            {
-                foreach (string text in File.ReadAllLines(path))
-                {
-                    if (!daycareRooms.Contains(text.Trim()))
-                    {
-                        daycareRooms.Add(text.Trim());
-                    }
-                }
-            }
-
-            daycareRooms = [.. daycareRooms.Distinct()];
-            daycareRegions = [.. daycareRooms.Select(s => s.Split('_')[0]).Distinct()];
         }
 
         // Add hooks
         public void OnEnable()
         {
+            SDLogger = Logger;
+
             On.RainWorld.OnModsInit += Extras.WrapInit(LoadResources);
 
-            On.OverWorld.LoadWorld_string_Name_Timeline_bool += OverWorld_LoadWorld_string_Name_Timeline_bool;
+            On.OverWorld.LoadWorld_string_Name_Timeline_bool += OverWorld_LoadWorld;
 
-            On.ShelterDoor.DoorClosed += ShelterDoor_DoorClosed;
+            On.RainWorldGame.Win += RainWorldGame_Win;
 
             On.Room.ReadyForAI += Room_ReadyForAI;
 
@@ -59,7 +49,7 @@ namespace SlugpupDaycare
         }
 
         // Save slugpups in daycare rooms from region we are exiting
-        private void OverWorld_LoadWorld_string_Name_Timeline_bool(
+        private void OverWorld_LoadWorld(
             On.OverWorld.orig_LoadWorld_string_Name_Timeline_bool orig,
             OverWorld self,
             string worldName,
@@ -67,13 +57,6 @@ namespace SlugpupDaycare
             SlugcatStats.Timeline time,
             bool singleRoomWorld)
         {
-            Custom.Log(
-            [
-                MOD_TITLE,
-                "Daycare rooms",
-                .. daycareRooms
-            ]);
-
             World oldRegion = self.activeWorld;
 
             if (oldRegion != null)
@@ -91,46 +74,52 @@ namespace SlugpupDaycare
         }
 
         // Save slugpups in other daycare rooms if we shelter in the same region
-        private void ShelterDoor_DoorClosed(On.ShelterDoor.orig_DoorClosed orig, ShelterDoor self)
+        private void RainWorldGame_Win(On.RainWorldGame.orig_Win orig, RainWorldGame self, bool malnourished, bool fromWarpPoint)
         {
-            string regionAcronym = Region.GetVanillaEquivalentRegionAcronym(self.room.world.name);
-            if (daycareRegions.Contains(regionAcronym))
+            if (self.FirstAlivePlayer != null && self.manager.upcomingProcess == null)
             {
-                IEnumerable<AbstractRoom> otherDaycareRoomsInRegion = self.room.world.abstractRooms
-                    .Where(room => daycareRooms.Contains(room.name) && room.name != self.room.abstractRoom.name);
-                SaveSlugpupsInRooms(otherDaycareRoomsInRegion, self.room.game.GetStorySession.saveState.miscWorldSaveData.SD());
+                AbstractRoom shelterRoom = self.world.GetAbstractRoom(self.FirstAlivePlayer.pos);
+                string regionAcronym = Region.GetVanillaEquivalentRegionAcronym(shelterRoom.world.name);
+                if (daycareRegions.Contains(regionAcronym))
+                {
+                    IEnumerable<AbstractRoom> otherDaycareRoomsInRegion = shelterRoom.world.abstractRooms
+                        .Where(room => daycareRooms.Contains(room.name) && room.name != shelterRoom.name);
+                    SaveSlugpupsInRooms(otherDaycareRoomsInRegion, self.GetStorySession.saveState.miscWorldSaveData.SD());
+                }
             }
 
-            orig(self);
+            orig(self, malnourished, fromWarpPoint);
         }
 
         // Spawn saved slugpups
         private void Room_ReadyForAI(On.Room.orig_ReadyForAI orig, Room self)
         {
-            if (daycareRooms.Contains(self.abstractRoom.name))
+            if (daycareRooms.Contains(self.abstractRoom.name) && self.game != null && self.game.IsStorySession)
             {
                 MiscWorldSaveDataData sd = self.game.GetStorySession.saveState.miscWorldSaveData.SD();
                 if (sd.daycareSlugpups.TryGetValue(self.abstractRoom.name, out List<string> slugpupsToRespawn))
                 {
-                    Custom.Log(
+                    SDLogger.LogInfo(string.Join("\t",
                     [
-                        MOD_TITLE,
                         "Spawning slugpups in room",
                         self.abstractRoom.name
-                    ]);
+                    ]));
                     for (int i = 0; i < slugpupsToRespawn.Count;)
                     {
-                        Custom.Log([MOD_TITLE, "Checking if we can spawn saved slugpup", slugpupsToRespawn[i]]);
+                        SDLogger.LogInfo(string.Join("\t",
+                        [
+                            "Checking if we can spawn saved slugpup",
+                            slugpupsToRespawn[i]
+                        ]));
                         AbstractCreature slugpup = SaveState.AbstractCreatureFromString(self.world, slugpupsToRespawn[i], true);
                         if (slugpup.Room.name == self.abstractRoom.name)
                         {
-                            Custom.Log(
+                            SDLogger.LogInfo(string.Join("\t",
                             [
-                                MOD_TITLE,
                                 "Adding entity to room",
                                 slugpup.ID.number.ToString(),
                                 self.abstractRoom.name
-                            ]);
+                            ]));
                             slugpup.Room.AddEntity(slugpup);
                             (slugpup.state as PlayerNPCState).foodInStomach = 3;
                             sd.daycareSlugpups[self.abstractRoom.name].Remove(slugpupsToRespawn[i]);
@@ -162,20 +151,23 @@ namespace SlugpupDaycare
             if (sd.daycareSlugpups != null && sd.daycareSlugpups.Count > 0)
             {
                 addToSave += "DAYCARESLUGPUPS<mwB>";
-                KeyValuePair<string, List<string>>[] slugpupsToSave = [.. sd.daycareSlugpups.Distinct()];
+                KeyValuePair<string, List<string>>[] slugpupsToSave = [.. sd.daycareSlugpups.Where(kvp => kvp.Value.Count > 0).Distinct()];
                 for (int i = 0; i < slugpupsToSave.Length; i++)
                 {
                     addToSave += slugpupsToSave[i].Key + "<mwC>" + string.Join("<mwD>", slugpupsToSave[i].Value) +
                         (i < slugpupsToSave.Length - 1 ? "<mwB>" : "");
                 }
                 addToSave += "<mwA>";
-                Custom.Log(
+                SDLogger.LogInfo(string.Join("\t",
                 [
-                    MOD_TITLE,
                     "Adding slugpups to miscWorldSave",
                     addToSave
-                ]);
+                ]));
                 self.unrecognizedSaveStrings.Add(addToSave);
+            }
+            else
+            {
+                SDLogger.LogInfo("No slugpups in daycares to save");
             }
 
             return orig(self);
@@ -189,34 +181,31 @@ namespace SlugpupDaycare
             MiscWorldSaveDataData sd = self.SD();
             sd.daycareSlugpups = [];
 
-            //Custom.Log([MOD_TITLE, "Unrecognized save strings", .. self.unrecognizedSaveStrings]);
+            //SDLogger.LogInfo(string.Join("\t",[MOD_TITLE, "Unrecognized save strings", .. self.unrecognizedSaveStrings]);
             string slugpupDaycareSave = self.unrecognizedSaveStrings.FirstOrDefault(s => s.StartsWith("DAYCARESLUGPUPS"));
             if (!slugpupDaycareSave.IsNullOrWhiteSpace())
             {
-                Custom.Log(
+                SDLogger.LogInfo(string.Join("\t",
                 [
-                    MOD_TITLE,
                     "Slugpups Daycare save",
                     slugpupDaycareSave
-                ]);
+                ]));
                 IEnumerable<string> slugpupDaycareRooms = Regex.Split(slugpupDaycareSave, "<mwB>").Skip(1);
-                Custom.Log(
+                SDLogger.LogInfo(string.Join("\t",
                 [
-                    MOD_TITLE,
                     "All saved slugpups",
                     .. slugpupDaycareRooms
-                ]);
+                ]));
                 foreach (string region in slugpupDaycareRooms)
                 {
                     if (!region.IsNullOrWhiteSpace())
                     {
                         string[] slugpupStrings = Regex.Split(region, "<mwC>");
-                        Custom.Log(
+                        SDLogger.LogInfo(string.Join("\t",
                         [
-                            MOD_TITLE,
                             "Retrieving slugpups from save for room",
                             .. slugpupStrings
-                        ]);
+                        ]));
                         sd.daycareSlugpups[slugpupStrings[0]] = [.. Regex.Split(slugpupStrings[1], "<mwD>")];
                     }
                 }
@@ -228,31 +217,60 @@ namespace SlugpupDaycare
         {
             orig();
 
-            string filePath = Path.Combine(Path.Combine(Custom.RootFolderDirectory(), "mergedmods"), daycareRoomsPath);
+            string filePath = Path.Combine(Path.Combine(Custom.RootFolderDirectory(), "mergedmods"), DAYCARE_ROOMS_PATH);
             if (!File.Exists(filePath))
             {
                 CustomRegionsMod.CustomLog("merging daycarerooms");
-                CustomMerge.MergeSpecific(daycareRoomsPath);
+                CustomMerge.MergeSpecific(DAYCARE_ROOMS_PATH);
             }
+
+            LoadDaycareRoomsSet();
+        }
+
+        private void LoadDaycareRoomsSet()
+        {
+            string path = AssetManager.ResolveFilePath(DAYCARE_ROOMS_PATH);
+            if (File.Exists(path))
+            {
+                foreach (string text in File.ReadAllLines(path))
+                {
+                    if (!daycareRooms.Contains(text.Trim()))
+                    {
+                        daycareRooms.Add(text.Trim());
+                    }
+                }
+            }
+
+            daycareRooms = [.. daycareRooms.Distinct()];
+            daycareRegions = [.. daycareRooms.Select(s => s.Split('_')[0]).Distinct()];
+
+            SDLogger.LogInfo(string.Join("\t",
+            [
+                "Daycare rooms:",
+                .. daycareRooms.ToArray()
+            ]));
         }
 
         private void SaveSlugpupsInRooms(IEnumerable<AbstractRoom> daycareRooms, MiscWorldSaveDataData sd)
         {
             foreach (AbstractRoom daycareRoom in daycareRooms)
             {
-                sd.daycareSlugpups[daycareRoom.name] = [];
-                List<string> slugpupsInRoom = [.. daycareRoom.creatures
-                            .Where(creature => creature.creatureTemplate.TopAncestor().type == MoreSlugcatsEnums.CreatureTemplateType.SlugNPC)
-                            .Select(SaveState.AbstractCreatureToStringStoryWorld)];
-                if (slugpupsInRoom.Count > 0)
+                IEnumerable<AbstractCreature> slugpupsInRoom = daycareRoom.creatures
+                            .Where(creature => creature.Room == daycareRoom && creature.creatureTemplate.TopAncestor().type == MoreSlugcatsEnums.CreatureTemplateType.SlugNPC);
+                foreach (AbstractCreature slugpup in slugpupsInRoom)
                 {
-                    Custom.Log(
+                    (slugpup.state as PlayerNPCState).foodInStomach = 3;
+                }
+
+                List<string> slugpupsInRoomStrings = [.. slugpupsInRoom.Select(SaveState.AbstractCreatureToStringStoryWorld)];
+                if (slugpupsInRoomStrings.Count > 0)
+                {
+                    SDLogger.LogInfo(string.Join("\t",
                     [
-                        MOD_TITLE,
                             "Adding slugpup(s) to be saved",
-                            .. slugpupsInRoom
-                    ]);
-                    sd.daycareSlugpups[daycareRoom.name].AddRange(slugpupsInRoom);
+                            .. slugpupsInRoomStrings
+                    ]));
+                    sd.daycareSlugpups[daycareRoom.name] = slugpupsInRoomStrings;
                 }
             }
         }
