@@ -12,7 +12,7 @@ using System.Text.RegularExpressions;
 
 namespace SlugpupDaycare
 {
-    [BepInPlugin(MOD_ID, MOD_TITLE, "0.1.0")]
+    [BepInPlugin(MOD_ID, MOD_TITLE, "0.2.0")]
     class Plugin : BaseUnityPlugin
     {
         public static ManualLogSource SDLogger;

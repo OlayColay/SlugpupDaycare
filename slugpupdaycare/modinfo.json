@@ -1,7 +1,7 @@
 ﻿{
 	"id": "olaycolay.slugpupdaycare",
 	"name": "Slugpup Daycare",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"authors": "OlayColay",
 	"description": "Keep your slugpups safe while you venture to other regions!",
 	"requirements": [ "crs" ],
